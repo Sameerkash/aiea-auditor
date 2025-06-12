@@ -26,21 +26,23 @@ class State(TypedDict):
 
 
 query_format = """
- Format the output exactly as and do not add RULES: under a seperate heading :
             FACTS:
-            <Prolog facts> <Prolog rules>
+            <Prolog facts>
+
+            RULES:
+            <Prolog rules>
 
             QUERY:
             ?- <Prolog query>.
 
-            Do not include any additional explanations or comments or headings.
+            Do not include the above informaiton in ``` ``` code blocks or any additional explanations or comments or headings.
 
 """
 
 
 chain_of_thought = """ 
-Provide step by step reasoning for each Prolog query using the given facts and rules. 
-Provide the reasoning output as reasoning under the heading "REASONING". Ensure to take each of the below point into 
+Provide step by step reasoning for each Prolog query using the given facts and rules. Refer the above Problem and context
+Provide the reasoning output as reasoning under the heading "REASONING". Ensure to take each of the below point into
 consideration for each step of thought.
 
   Important:
@@ -48,21 +50,17 @@ consideration for each step of thought.
             2. Use proper Prolog predicates and variables
             3. Ensure the query is properly formatted with a period at the end
             4. Keep the facts and rules simple and direct
-            5. For marriage relationships, use husband(X,Y) where X is the husband of Y
-            6. Generate queries that exactly match the facts in the knowledge base
+            5. Generate queries that exactly match the facts in the knowledge base
 """
 
-# used these problem and goal to test both CSP, logic program and error condition
+
 nl_problem_goal = """
-Monica, Rachel and Phoebe are Female
-Ross, Chandler and Joey are male
-Ross, Rachel, Monica, Chandler and Joey are all friends
+            ross and joey are each other's bestfriends
+            Pheobe is friends with both Rachel and Monica
+            Ross is Monica's brother
 
-Is the below following statements is true, false or uncertain?
-Amy is rachel's sister
+            Describe all bestfriend of joey
 """
-# Chandler and Monica are not only married but also best friends which is similar to the relationship between phoebe and mike.
-# phoebe and mike know each other from childhood
 
 document_loader = TextLoader("prolog_kb_context.txt")
 documnets = document_loader.load()
@@ -137,25 +135,27 @@ def logic_solver(state: State) -> State:
     chat_messages = [
         SystemMessage(
             content="""You are a Prolog expert who is experienced in converting natural language problems into Prolog facts, rules and queries. 
-            You should create valid Prolog syntax that can be executed directly.
+            You should create valid Prolog syntax that can be executed directly using the pyswip python library.
             """
         ),
         HumanMessage(
             content=f"""
-            Given the following natural language problem, convert it into Prolog facts, rules, and query to check if the claim is true, false, or uncertain.
+            Given the following natural language problem, convert provided context into Prolog facts, rules, and query.
+            Problem: {nl_problem}
             Use the following knowledge base as a reference for additional context: {context}
-            {query_format}
+            Ensure:
+            1. Ensure to Group the clauses together.
+            2. Ensure all prolog parametrs are instaniated properly.
+            3. Produce all valid facts and rules present in problem and context.
             {chain_of_thought}
-
-            Problem:
-            {nl_problem}
+            Format the output exactly as as it is under seperate headings : {query_format}
             """
         ),
     ]
 
     llm_response = client.invoke(chat_messages).content
-    facts, query = symbolic_formulator(llm_response)
-    prolog_kb_creater(facts)
+    facts, query, rules = symbolic_formulator(llm_response)
+    prolog_kb_creater(facts, rules)
     result = classify_result("output.pl", query)
 
     print("Determined Answer:")
@@ -182,28 +182,33 @@ def symbolic_formulator(llm_response):
     llm_response = str(llm_response)
     # Extract facts and query using more robust regex patterns
     reasoning = re.search(r"REASONING:\n(?:\d+\..*\n?)+", llm_response, re.DOTALL)
-    facts_match = re.search(r"FACTS:\s*(.*?)(?:QUERY:|$)", llm_response, re.DOTALL)
+    facts_match = re.search(r"FACTS:\s*(.*?)(?:RULES:|$)", llm_response, re.DOTALL)
+    rules_match = re.search(r"RULES:\s*(.*?)(?:QUERY:|$)", llm_response, re.DOTALL)
     query_match = re.search(r"QUERY:\s*\?\-\s*([^\.\n]+)", llm_response)
 
     print("Chain of Thought Reasoning")
-    print(reasoning.group(0).strip())
+    if reasoning != None:
+        print(reasoning.group(0).strip())
 
     if not facts_match or not query_match:
         raise ValueError("Could not parse facts or query from response")
 
     facts = facts_match.group(1).strip()
     query = query_match.group(1).strip()
+    rules = rules_match.group(1).strip()
 
     # Ensure query ends with a period
     if not query.endswith("."):
         query += "."
 
-    return facts, query
+    return facts, query, rules
 
 
-def prolog_kb_creater(facts, filename="output.pl"):
+def prolog_kb_creater(facts, rules, filename="output.pl"):
     with open(filename, "w") as file:
         file.write(facts)
+        file.write("\n")
+        file.write(rules)
 
 
 # mimic result interpreter
@@ -217,10 +222,12 @@ def classify_result(fact_file, query):
         print(f"Error in Prolog execution: {str(e)}")
         return "uncertain"
 
+
 def result_interpreter(state: State) -> State:
     result = state["logic_response"]
     state["result_interpreted"] = result
     return state
+
 
 # mimic self refinement process
 def self_refinement(nl_problem, original_response, query_result, max_count=3):
@@ -255,11 +262,8 @@ def self_refinement(nl_problem, original_response, query_result, max_count=3):
 
         print(f"\n Refinement Attempt completed ", refine_counter)
 
-        facts, query = symbolic_formulator(refined_response)
-        print(refined_response)
-
-        prolog_kb_creater(facts)
-
+        facts, query, rules = symbolic_formulator(refined_response)
+        prolog_kb_creater(facts, rules)
         query_result = classify_result("output.pl", query)
 
         if query_result != "uncertain":
@@ -290,15 +294,7 @@ builder.add_edge("logic_solver", "result_interpreter")
 graph = builder.compile()
 
 if __name__ == "__main__":
-    input_state = {
-        "question": """
-            Ross and Joey are best friends
-            Pheobe is friends with both Rachel and Monica
-            Ross is Monica's brother
-
-            Describe all bestfriends of Joey
-        """
-    }
+    input_state = {"question": nl_problem_goal}
 
     result = graph.invoke(input_state)
     print(result["result_interpreted"])

@@ -1,23 +1,22 @@
+bestfriend(joey, chandler).
+bestfriend(chandler, joey).
+friend(monica, rachel).
 husband(mike, phoebe).
 husband(chandler, monica).
 
 sibling(ross, monica).
 sibling(amy, rachel).
-friend(joey, chandler).
-friend(chandler, joey).
-friend(monica, rachel).
-female(rachel).
-female(phoebe).
-female(amy).
 
 male(ross).
 male(joey).
 male(chandler).
 male(mike).
+female(rachel).
+female(phoebe).
+female(amy).
 
-friend(ross, joey).
-friend(joey, ross).
+bestfriend(ross, joey).
+bestfriend(joey, ross).
 friend(phoebe, rachel).
 friend(phoebe, monica).
-
-bestfriends(X, Y) :- friend(X, Y), friend(Y, X).
+sibling(ross, monica).
